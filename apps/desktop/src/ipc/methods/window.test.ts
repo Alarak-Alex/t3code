@@ -1,11 +1,9 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import type { ManagedPolicyLimits } from "@t3tools/contracts";
 import { EDITORS, REMOTE_CAPABLE_EDITOR_IDS } from "@t3tools/contracts";
 import { resolveEditorCommand } from "@t3tools/shared/editor";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { makePathDirectoryListings, PathDirectoryListings } from "@t3tools/shared/shell";
-import { ManagedPolicyFileError } from "@t3tools/shared/managedPolicyFile";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
@@ -306,40 +304,17 @@ describe("installRelayTelemetryEnabled", () => {
       return { beforeDiscovery, afterDiscovery: ask() };
     }).pipe(Effect.scoped);
 
-  it.effect("reads the desktop host opt-out before returning the renderer policy", () =>
+  it.effect("disables relay tracing even when enabled in the desktop environment", () =>
     Effect.gen(function* () {
-      assert.deepEqual(yield* relayTelemetryEnabled({ T3CODE_TELEMETRY_ENABLED: "false" }), {
+      const enabled = { T3CODE_TELEMETRY_ENABLED: "true" };
+      assert.deepEqual(yield* relayTelemetryEnabled(enabled), {
         beforeDiscovery: false,
         afterDiscovery: false,
       });
-      // Undecided until the login shell is read, so the renderer asks again instead of opting out.
-      assert.deepEqual(yield* relayTelemetryEnabled({}), {
-        beforeDiscovery: null,
-        afterDiscovery: true,
+      assert.deepEqual(yield* relayTelemetryEnabled({}, undefined, enabled), {
+        beforeDiscovery: false,
+        afterDiscovery: false,
       });
-      assert.deepEqual(
-        yield* relayTelemetryEnabled({}, undefined, { T3CODE_TELEMETRY_ENABLED: "false" }),
-        { beforeDiscovery: null, afterDiscovery: false },
-      );
-    }),
-  );
-
-  it.effect("turns relay tracing off when the managed policy turns telemetry off", () =>
-    Effect.gen(function* () {
-      const policy = (limits: ManagedPolicyLimits) => ({
-        schemaVersion: 1 as const,
-        organization: "Example Corp",
-        limits,
-      });
-      const after = function* (...args: Parameters<typeof relayTelemetryEnabled>) {
-        return (yield* relayTelemetryEnabled(...args)).afterDiscovery;
-      };
-      assert.isFalse(yield* after({}, policy({ telemetry: false })));
-      assert.isTrue(yield* after({}, policy({ webhookTasks: false })));
-      // A policy that cannot be read fails closed.
-      assert.isFalse(
-        yield* after({}, new ManagedPolicyFileError({ path: "/test", reason: "bad JSON" })),
-      );
     }),
   );
 });

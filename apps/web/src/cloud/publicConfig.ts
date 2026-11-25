@@ -3,6 +3,7 @@ import {
   relayClerkTokenOptions,
 } from "@t3tools/shared/relayAuth";
 import { normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
+import { PRODUCT_TELEMETRY_ENABLED } from "@t3tools/shared/otelEnvironment";
 import * as Schema from "effect/Schema";
 
 import { isHostedStaticApp } from "../hostedPairing";
@@ -71,6 +72,7 @@ export function setServerRelayTelemetry(allowed: boolean | null): void {
 }
 
 export function relayTelemetryEnabled(): boolean | null {
+  if (!PRODUCT_TELEMETRY_ENABLED) return false;
   if (typeof window === "undefined") return true;
   if (window.desktopBridge) {
     desktopRelayTelemetry ??= window.desktopBridge.getRelayTelemetryEnabled();

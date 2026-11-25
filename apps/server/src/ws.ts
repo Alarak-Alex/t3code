@@ -262,6 +262,7 @@ import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
+import { PRODUCT_TELEMETRY_ENABLED } from "@t3tools/shared/otelEnvironment";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import { commandFeatureUsage, featureUsage } from "./telemetry/FeatureUsage.ts";
 import type { TelemetryOwner } from "./telemetry/Identify.ts";
@@ -1666,16 +1667,8 @@ export const layerWsRpc = (
         input: AcpRegistryListSessionsInput,
       ) {
         const project = yield* acpRegistrySessions.project(input.projectId);
-        const { instance, manager } = yield* acpRegistrySessions.sessionManager(input.instanceId);
-        // Only a probed agent advertises listing, so a read never installs or first-starts one.
-        const snapshot = yield* instance.snapshot.getSnapshot;
-        if (snapshot.nativeSessions?.canList !== true) {
-          return yield* new AcpRegistryOperationError({
-            reason: "session_list_unsupported",
-            message: "The ACP agent does not advertise session listing.",
-          });
-        }
-        const listed = yield* manager.listSessions({
+        const { instance, listed } = yield* acpRegistrySessions.listSessions({
+          instanceId: input.instanceId,
           cwd: project.workspaceRoot,
           ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
         });
@@ -3852,7 +3845,9 @@ export const layer = Layer.unwrap(
           ];
         }
         const clientAnalyticsProps = readClientAnalyticsProps(request);
-        yield* analytics.recordOwners(readClientOwners(request), "client");
+        if (PRODUCT_TELEMETRY_ENABLED) {
+          yield* analytics.recordOwners(readClientOwners(request), "client");
+        }
         const reportProfiles = yield* serverBrowser.profileReporter;
         const rpcWebSocketHttpEffect = yield* Effect.gen(function* () {
           const { protocol, httpEffect } = yield* RpcServer.makeProtocolWithHttpEffectWebsocket;
