@@ -1,3 +1,4 @@
+import * as NodeUtil from "node:util";
 import {
   type ServerProvider,
   type ServerProviderModel,
@@ -275,7 +276,7 @@ const create = Effect.fn("OmpRpcDriver.create")(function* (
     onCommandsUpdated: (cwd, commands) =>
       Effect.suspend(() => {
         const previous = commandsByCwd.get(cwd);
-        if (JSON.stringify(previous) === JSON.stringify(commands)) return Effect.void;
+        if (NodeUtil.isDeepStrictEqual(previous, commands)) return Effect.void;
         commandsByCwd.delete(cwd);
         commandsByCwd.set(cwd, commands);
         if (commandsByCwd.size > 128) commandsByCwd.delete(commandsByCwd.keys().next().value!);

@@ -1587,7 +1587,7 @@ export const makeOmpAdapter = Effect.fn("OmpAdapter.make")(function* (options: {
                 entry.images,
                 (image) =>
                   host.saveRecoveredImage?.({ ...image, threadId: run.input.threadId }) ??
-                  Effect.succeed(undefined),
+                  Effect.undefined,
               );
               if (attachments.some((image) => image === undefined)) imagesDropped = true;
               return {
