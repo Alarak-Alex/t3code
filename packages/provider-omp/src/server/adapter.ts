@@ -1,6 +1,7 @@
 import * as NodeUtil from "node:util";
 import {
   type ModelSelection,
+  type NodeId,
   type OrchestrationV2ConversationMessage,
   type PlanId,
   type OrchestrationV2ProviderSession,
@@ -10,8 +11,12 @@ import {
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2Subagent,
   type OrchestrationV2UserInputQuestion,
+  type ProviderTurnId,
+  type RunId,
   RuntimeRequestId,
   type ProviderInstanceId,
+  type ThreadId,
+  type TurnItemId,
   parseGoalCommand,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ServerProviderSlashCommand,
@@ -38,6 +43,10 @@ import {
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
+import {
+  makeSubagentChildThread,
+  makeSubagentConversationArtifacts,
+} from "@t3tools/provider-core/server/subagentProjection";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -75,6 +84,42 @@ const nativeRef = (nativeId: string, strength: "weak" | "strong" = "strong") => 
 });
 const unsupported = (feature: string) =>
   Effect.fail(ompProtocolError(`Oh My Pi RPC does not support ${feature} in T3 Code`));
+
+export function formatOmpSubagentTitle(
+  description: string | undefined,
+  nativeTaskId: string,
+  agent: string | undefined,
+): string | null {
+  const explicit = description?.trim();
+  if (explicit) return explicit;
+  const trimmedId = nativeTaskId.trim();
+  if (trimmedId) {
+    const stripped = trimmedId.replace(/^\d+-(?=.+)/u, "");
+    const spaced = stripped
+      .replace(/([a-z0-9])([A-Z])/gu, "$1 $2")
+      .replace(/[_-]+/gu, " ")
+      .replace(/\s+/gu, " ")
+      .trim();
+    if (spaced) return spaced;
+  }
+  return agent?.trim() || null;
+}
+
+function extractOmpSubagentProgress(progress: Record<string, unknown>): string | undefined {
+  const intent = string(progress.currentToolIntent)?.trim() || string(progress.lastIntent)?.trim();
+  if (intent) return intent.slice(0, 240);
+  const tool = string(progress.currentTool)?.trim();
+  if (!tool) return undefined;
+  const args = string(progress.currentToolArgs)?.trim();
+  return (args ? `${tool} ${args}` : tool).slice(0, 240);
+}
+
+function extractOmpSubagentOutput(progress: Record<string, unknown>): string | null {
+  const lines = array(progress.recentOutput)
+    .map((line) => string(line))
+    .filter((line): line is string => line !== undefined && line.trim().length > 0);
+  return lines.length > 0 ? lines.join("\n").trim() : null;
+}
 
 interface ActiveTurn {
   input: ProviderAdapterV2TurnInput;
@@ -199,6 +244,23 @@ export const makeOmpAdapter = Effect.fn("OmpAdapter.make")(function* (options: {
     let entryCursor: string | undefined;
     let active: ActiveTurn | undefined;
     const subagents = new Map<string, OrchestrationV2Subagent>();
+    const sessionScope = yield* Effect.scope;
+    const subagentChildren = new Map<
+      string,
+      {
+        readonly childThreadId: ThreadId;
+        readonly childRootNodeId: NodeId;
+        readonly parentTurnItemId: TurnItemId;
+        readonly parentTurnId: ProviderTurnId;
+        readonly parentRunId: RunId;
+        readonly parentRootNodeId: NodeId;
+        readonly parentThreadId: ThreadId;
+        readonly parentOrdinal: number;
+        readonly createdAt: DateTime.Utc;
+        promptEmitted: boolean;
+        transcriptSynced: boolean;
+      }
+    >();
     const dialogs = new Map<
       RuntimeRequestId,
       {
@@ -607,6 +669,134 @@ export const makeOmpAdapter = Effect.fn("OmpAdapter.make")(function* (options: {
       yield* Deferred.succeed(run.done, undefined);
     });
 
+    const publishSubagentChildRoot = Effect.fnUntraced(function* (
+      child: {
+        readonly childThreadId: ThreadId;
+        readonly childRootNodeId: NodeId;
+        readonly createdAt: DateTime.Utc;
+      },
+      nativeTaskId: string,
+      status: OrchestrationV2Subagent["status"],
+      time: DateTime.Utc,
+    ) {
+      yield* emit({
+        type: "node.updated",
+        driver,
+        node: {
+          id: child.childRootNodeId,
+          threadId: child.childThreadId,
+          runId: null,
+          parentNodeId: null,
+          rootNodeId: child.childRootNodeId,
+          kind: "root_turn",
+          status,
+          countsForRun: false,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: nativeRef(nativeTaskId),
+          runtimeRequestId: null,
+          checkpointScopeId: null,
+          startedAt: child.createdAt,
+          completedAt: status === "running" || status === "pending" ? null : time,
+        },
+      });
+    });
+
+    const publishSubagentChildMessage = Effect.fnUntraced(function* (
+      child: {
+        readonly childThreadId: ThreadId;
+        readonly childRootNodeId: NodeId;
+        readonly parentThreadId: ThreadId;
+      },
+      nativeTaskId: string,
+      role: "user" | "assistant",
+      text: string,
+      key: string,
+      ordinal: number,
+      time: DateTime.Utc,
+    ) {
+      const identity = `${child.childThreadId}:${key}`;
+      const artifacts = makeSubagentConversationArtifacts({
+        messageId: id.derive.messageFromProviderItem({ driver, nativeItemId: identity }),
+        ...(role === "user" ? { senderThreadId: child.parentThreadId } : {}),
+        turnItemId: id.derive.turnItemFromProviderItem({ driver, nativeItemId: identity }),
+        threadId: child.childThreadId,
+        rootNodeId: child.childRootNodeId,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: nativeRef(nativeTaskId),
+        role,
+        text,
+        ordinal,
+        now: time,
+      });
+      yield* emit({ type: "message.updated", driver, message: artifacts.message });
+      yield* emit({ type: "turn_item.updated", driver, turnItem: artifacts.turnItem });
+    });
+
+    const emitSubagentParentArtifacts = Effect.fnUntraced(function* (
+      task: OrchestrationV2Subagent,
+      child: {
+        readonly parentTurnItemId: TurnItemId;
+        readonly parentTurnId: ProviderTurnId;
+        readonly parentRunId: RunId;
+        readonly parentRootNodeId: NodeId;
+        readonly parentOrdinal: number;
+      },
+      nativeTaskId: string,
+    ) {
+      yield* emit({
+        type: "node.updated",
+        driver,
+        node: {
+          id: task.id,
+          threadId: task.threadId,
+          runId: child.parentRunId,
+          parentNodeId: child.parentRootNodeId,
+          rootNodeId: child.parentRootNodeId,
+          kind: "subagent",
+          status: task.status,
+          countsForRun: false,
+          providerThreadId: task.providerThreadId,
+          providerTurnId: child.parentTurnId,
+          nativeItemRef: nativeRef(nativeTaskId),
+          runtimeRequestId: null,
+          checkpointScopeId: null,
+          startedAt: task.startedAt,
+          completedAt: task.completedAt,
+        },
+      });
+      yield* emit({
+        type: "turn_item.updated",
+        driver,
+        turnItem: {
+          id: child.parentTurnItemId,
+          threadId: task.threadId,
+          runId: child.parentRunId,
+          nodeId: task.id,
+          providerThreadId: task.providerThreadId,
+          providerTurnId: child.parentTurnId,
+          nativeItemRef: nativeRef(nativeTaskId),
+          parentItemId: null,
+          ordinal: child.parentOrdinal,
+          type: "subagent",
+          status: task.status,
+          title: task.title,
+          startedAt: task.startedAt,
+          completedAt: task.completedAt,
+          updatedAt: task.updatedAt,
+          subagentId: task.id,
+          origin: "provider_native",
+          driver,
+          providerInstanceId: options.instanceId,
+          childThreadId: task.childThreadId,
+          prompt: task.prompt,
+          ...(task.progress === undefined ? {} : { progress: task.progress }),
+          result: task.result,
+        },
+      });
+    });
+
     const onSubagent = Effect.fnUntraced(function* (frame: Record<string, unknown>) {
       const payload = record(frame.payload);
       const progress = record(payload.progress);
@@ -631,6 +821,62 @@ export const makeOmpAdapter = Effect.fn("OmpAdapter.make")(function* (options: {
         return;
       const nextStatus = status ?? previous?.status ?? "running";
       const time = yield* DateTime.now;
+      const title =
+        formatOmpSubagentTitle(
+          string(payload.description) ?? string(progress.description),
+          nativeTaskId,
+          string(payload.agent),
+        ) ??
+        previous?.title ??
+        null;
+      const prompt = string(payload.assignment) ?? string(payload.task) ?? previous?.prompt ?? "";
+      const model = string(progress.resolvedModel) ?? previous?.model ?? null;
+      const nextProgress = extractOmpSubagentProgress(progress) ?? previous?.progress;
+      const nextResult = extractOmpSubagentOutput(progress) ?? previous?.result ?? null;
+      let child = subagentChildren.get(nativeTaskId);
+      if (!child && run) {
+        const childThreadId = id.derive.subagentThread({
+          driver,
+          providerInstanceId: options.instanceId,
+          nativeThreadId: `${thread.id}:subagent:${nativeTaskId}`,
+        });
+        const childRootNodeId = id.derive.nodeFromProviderItem({
+          driver,
+          nativeItemId: `${thread.id}:subagent:${nativeTaskId}:root`,
+        });
+        const parentTurnItemId = id.derive.turnItemFromProviderItem({
+          driver,
+          nativeItemId: `${thread.id}:subagent:${nativeTaskId}`,
+        });
+        const appThread = makeSubagentChildThread({
+          parentThread: run.input.appThread,
+          childThreadId,
+          parentNodeId: run.input.rootNodeId,
+          activeProviderThreadId: null,
+          providerInstanceId: options.instanceId,
+          modelSelection: model ? { ...run.input.modelSelection, model } : run.input.modelSelection,
+          title: title ?? nativeTaskId,
+          now: time,
+          createdBy: "agent",
+          creationSource: "provider",
+        });
+        child = {
+          childThreadId,
+          childRootNodeId,
+          parentTurnItemId,
+          parentTurnId: run.turn.id,
+          parentRunId: run.input.runId,
+          parentRootNodeId: run.input.rootNodeId,
+          parentThreadId: input.threadId,
+          parentOrdinal: run.rows.size + subagentChildren.size + 1,
+          createdAt: time,
+          promptEmitted: false,
+          transcriptSynced: false,
+        };
+        subagentChildren.set(nativeTaskId, child);
+        yield* emit({ type: "app_thread.created", driver, appThread });
+        yield* publishSubagentChildRoot(child, nativeTaskId, nextStatus, time);
+      }
       const task: OrchestrationV2Subagent = {
         ...(previous ?? {
           id: id.derive.nodeFromProviderItem({
@@ -641,7 +887,7 @@ export const makeOmpAdapter = Effect.fn("OmpAdapter.make")(function* (options: {
           runId: run!.input.runId,
           parentNodeId: run!.input.rootNodeId,
           providerThreadId: thread.id,
-          childThreadId: null,
+          childThreadId: child?.childThreadId ?? null,
           origin: "provider_native",
           createdBy: "agent",
           driver,
@@ -651,30 +897,114 @@ export const makeOmpAdapter = Effect.fn("OmpAdapter.make")(function* (options: {
           result: null,
           startedAt: time,
         }),
-        title: string(payload.agent) ?? previous?.title ?? null,
-        prompt: string(payload.task) ?? string(payload.assignment) ?? previous?.prompt ?? "",
+        childThreadId: child?.childThreadId ?? previous?.childThreadId ?? null,
+        title,
+        prompt,
+        model,
+        ...(nextProgress === undefined ? {} : { progress: nextProgress }),
+        result: nextResult,
         status: nextStatus,
         completedAt: nextStatus === "running" ? null : time,
         updatedAt: time,
       };
       if (nextStatus === "running") subagents.set(nativeTaskId, task);
       else subagents.delete(nativeTaskId);
+      if (child && prompt.trim().length > 0 && !child.promptEmitted) {
+        child.promptEmitted = true;
+        yield* publishSubagentChildMessage(
+          child,
+          nativeTaskId,
+          "user",
+          prompt.trim(),
+          "msg:0",
+          1,
+          time,
+        );
+      }
       if (
         previous &&
         previous.status === task.status &&
         previous.title === task.title &&
-        previous.prompt === task.prompt
+        previous.prompt === task.prompt &&
+        previous.model === task.model &&
+        previous.progress === task.progress &&
+        previous.result === task.result
       )
         return;
       yield* emit({ type: "subagent.updated", driver, subagent: task });
+      if (child) {
+        yield* emitSubagentParentArtifacts(task, child, nativeTaskId);
+        if (!previous || previous.status !== task.status) {
+          yield* publishSubagentChildRoot(child, nativeTaskId, task.status, time);
+        }
+      }
       yield* updateThread({
-        pendingBackgroundTasks: [...subagents.entries()].map(([taskId, child]) => ({
+        pendingBackgroundTasks: [...subagents.entries()].map(([taskId, childTask]) => ({
           kind: "subagent" as const,
           taskId,
           providerInstanceId: options.instanceId,
-          ...(child.title ? { description: child.title } : {}),
+          ...(childTask.title ? { description: childTask.title } : {}),
         })),
       });
+      if (nextStatus !== "running" && child && !child.transcriptSynced) {
+        child.transcriptSynced = true;
+        const syncedChild = child;
+        yield* Effect.gen(function* () {
+          const response = yield* rpc
+            .request({ type: "get_subagent_messages", subagentId: nativeTaskId })
+            .pipe(
+              Effect.timeout("5 seconds"),
+              Effect.orElseSucceed(() => undefined),
+            );
+          const syncedAt = yield* DateTime.now;
+          const transcriptMessages = array(record(response).messages)
+            .map(record)
+            .flatMap(
+              (
+                entry,
+              ): ReadonlyArray<{ readonly role: "user" | "assistant"; readonly text: string }> => {
+                if (entry.role !== "user" && entry.role !== "assistant") return [];
+                const text = contentText(entry.content).trim();
+                return text.length > 0 ? [{ role: entry.role, text }] : [];
+              },
+            );
+          let finalAssistantText: string | null = null;
+          if (transcriptMessages.length > 0) {
+            for (const [index, entry] of transcriptMessages.entries()) {
+              yield* publishSubagentChildMessage(
+                syncedChild,
+                nativeTaskId,
+                entry.role,
+                entry.text,
+                `msg:${index}`,
+                index + 1,
+                syncedAt,
+              );
+              if (entry.role === "assistant") finalAssistantText = entry.text;
+            }
+          } else if (task.result?.trim()) {
+            yield* publishSubagentChildMessage(
+              syncedChild,
+              nativeTaskId,
+              "assistant",
+              task.result.trim(),
+              "msg:1",
+              2,
+              syncedAt,
+            );
+            finalAssistantText = task.result.trim();
+          }
+          if (finalAssistantText && finalAssistantText !== task.result) {
+            const finalTask: OrchestrationV2Subagent = {
+              ...task,
+              result: finalAssistantText,
+              updatedAt: syncedAt,
+            };
+            yield* emit({ type: "subagent.updated", driver, subagent: finalTask });
+            yield* emitSubagentParentArtifacts(finalTask, syncedChild, nativeTaskId);
+          }
+        }).pipe(Effect.ignore, Effect.forkIn(sessionScope));
+      }
     });
 
     const onFrame = Effect.fnUntraced(function* (frame: Record<string, unknown>) {

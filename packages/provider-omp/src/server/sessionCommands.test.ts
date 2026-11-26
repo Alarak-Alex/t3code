@@ -1,4 +1,5 @@
 import { expect, it } from "vite-plus/test";
+import { formatOmpSubagentTitle } from "./adapter.ts";
 import { readSubagentCommand } from "./protocol.ts";
 import { readSessionCommand } from "./sessionCommands.ts";
 
@@ -69,4 +70,14 @@ it("addresses transcripts by native subagent ID and rejects paths and invalid cu
   expect(readSubagentCommand("/omp:subagent-log ExampleAgent 9007199254740993")).toEqual({
     type: "invalid_subagent_command",
   });
+});
+
+it("derives concise subagent titles from description or task ID before falling back to agent kind", () => {
+  expect(formatOmpSubagentTitle("Check auth middleware", "1-AuthCheck", "task")).toBe(
+    "Check auth middleware",
+  );
+  expect(formatOmpSubagentTitle(undefined, "1-FableDialog", "task")).toBe("Fable Dialog");
+  expect(formatOmpSubagentTitle(undefined, "2-fable5_sol62_06", "task")).toBe("fable5 sol62 06");
+  expect(formatOmpSubagentTitle(undefined, "SwiftFalcon", "task")).toBe("Swift Falcon");
+  expect(formatOmpSubagentTitle(undefined, "", "task")).toBe("task");
 });

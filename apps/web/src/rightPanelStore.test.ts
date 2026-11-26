@@ -1,4 +1,4 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
@@ -1392,5 +1392,42 @@ describe("rightPanelStore", () => {
     store.reconcileBrowserSurfaces(refA, ["tab-a", "tab-b"]);
     expect(surfaceIds()).toEqual(["browser:tab-a", "terminal:term-1", "diff", "browser:tab-b"]);
     expect(store.getUserActionRevision(refA)).toBe(revision);
+  });
+
+  it("opens the subagents tab in list or detail mode and returns to the list cleanly", () => {
+    const store = useRightPanelStore.getState();
+    store.openSubagents(refA);
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "subagents",
+      surfaces: [{ id: "subagents", kind: "subagents" }],
+    });
+
+    store.openSubagents(refA, "child-thread-1");
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "subagents",
+      surfaces: [{ id: "subagents", kind: "subagents", selectedSubagentId: "child-thread-1" }],
+    });
+
+    store.openSubagents(refA);
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "subagents",
+      surfaces: [{ id: "subagents", kind: "subagents" }],
+    });
+
+    const migrated = migratePersistedRightPanelState({
+      byThreadKey: {
+        [scopedThreadKey(refA)]: {
+          isOpen: true,
+          activeSurfaceId: "subagents",
+          surfaces: [{ id: "subagents", kind: "subagents", selectedSubagentId: "" }],
+        },
+      },
+    });
+    expect(migrated.byThreadKey[scopedThreadKey(refA)]?.surfaces).toEqual([
+      { id: "subagents", kind: "subagents" },
+    ]);
   });
 });

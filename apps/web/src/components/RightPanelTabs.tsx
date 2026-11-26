@@ -160,6 +160,8 @@ export interface RightPanelTabsProps {
   onAddDevice: () => void;
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
+  /** Absent where subagents are not offered. */
+  onAddSubagents?: (() => void) | undefined;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -168,6 +170,7 @@ export interface RightPanelTabsProps {
   pullRequestsAvailable: boolean;
   deviceAvailable: boolean;
   sideChatAvailable?: boolean;
+  subagentsAvailable?: boolean;
   /** Overrides the default reason while side chats are available but cannot start. */
   sideChatDisabledReason?: string | null;
   pullRequestStatusSeeds?: Readonly<Record<string, PullRequestTabStatusSeed>>;
@@ -197,6 +200,7 @@ const SURFACE_DISABLED_REASONS = {
   pullRequests: msg("This thread has no linked items."),
   device: msg("Devices are only available from a thread."),
   sideChat: msg("Side chats start after the first message."),
+  subagents: msg("Subagents are only available from a thread."),
 } as const;
 
 // Closed keepMounted popups must stop blocking shortcuts once their exit transition ends.
@@ -222,6 +226,7 @@ const SURFACE_UNAVAILABLE_HINTS = {
   pullRequests: msg("No linked items available."),
   device: msg("Available from a thread."),
   sideChat: msg("Available after the first message."),
+  subagents: msg("Available from a thread."),
 } as const;
 
 type TabContextMenuAction =
@@ -341,6 +346,8 @@ function RightPanelEmptyState(props: {
   onAddDevice: () => void;
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
+  /** Absent where subagents are not offered. */
+  onAddSubagents?: (() => void) | undefined;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -349,6 +356,7 @@ function RightPanelEmptyState(props: {
   pullRequestsAvailable: boolean;
   deviceAvailable: boolean;
   sideChatAvailable: boolean;
+  subagentsAvailable: boolean;
   sideChatDisabledReason: string | null;
 }) {
   const gt = useGT();
@@ -424,6 +432,19 @@ function RightPanelEmptyState(props: {
             disabledReason:
               props.sideChatDisabledReason ?? messages(SURFACE_UNAVAILABLE_HINTS.sideChat),
             onClick: props.onAddSideChat,
+          },
+        ]
+      : []),
+    ...(props.onAddSubagents
+      ? [
+          {
+            label: msg("Subagents"),
+            description: msg("Inspect running and completed subagents."),
+            icon: Bot,
+            shortcut: "A",
+            available: props.subagentsAvailable,
+            disabledReason: messages(SURFACE_UNAVAILABLE_HINTS.subagents),
+            onClick: props.onAddSubagents,
           },
         ]
       : []),
@@ -613,6 +634,8 @@ function surfaceTitle(
       return `#${surface.number}`;
     case "pull-requests":
       return resolve(msg("Linked items"));
+    case "subagents":
+      return resolve(msg("Subagents"));
     case "issue":
       // A git host numbers its issues; a tracker with keys of its own, such as Linear, names them.
       return /^\d+$/.test(surface.key) ? `#${surface.key}` : surface.key;
@@ -714,6 +737,8 @@ function SurfaceIcon({
       );
     case "pull-requests":
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
+    case "subagents":
+      return <Bot className="size-3 shrink-0" />;
     case "issue":
       return <IssueSurfaceIcon surface={surface} environmentId={environmentId} />;
     case "thread":
@@ -1226,6 +1251,18 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           },
         ]
       : []),
+    ...(props.onAddSubagents
+      ? [
+          {
+            label: msg("Subagents"),
+            icon: Bot,
+            shortcut: "A",
+            available: props.subagentsAvailable === true,
+            disabledReason: messages(SURFACE_DISABLED_REASONS.subagents),
+            onClick: props.onAddSubagents,
+          },
+        ]
+      : []),
   ] as const;
   const canAddSurface = addSurfaceActions.some((action) => action.available);
 
@@ -1688,6 +1725,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddPullRequests={props.onAddPullRequests}
             onAddDevice={props.onAddDevice}
             onAddSideChat={props.onAddSideChat}
+            onAddSubagents={props.onAddSubagents}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}
             diffAvailable={props.diffAvailable}
@@ -1696,6 +1734,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             pullRequestsAvailable={props.pullRequestsAvailable}
             deviceAvailable={props.deviceAvailable}
             sideChatAvailable={props.sideChatAvailable === true}
+            subagentsAvailable={props.subagentsAvailable === true}
             sideChatDisabledReason={props.sideChatDisabledReason ?? null}
           />
         ) : (

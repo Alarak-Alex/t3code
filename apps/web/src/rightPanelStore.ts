@@ -30,6 +30,7 @@ const RIGHT_PANEL_KINDS = [
   "pull-request",
   "pull-requests",
   "issue",
+  "subagents",
   "thread",
   "linked-thread",
 ] as const;
@@ -88,6 +89,7 @@ export type RightPanelSurface =
       detailTab?: PullRequestDetailTab;
     }
   | { id: "pull-requests"; kind: "pull-requests" }
+  | SubagentsSurface
   /**
    * An issue opened in the issues list's shared panel, or beside a thread. Like `pull-request`,
    * the reference lives in the id so several issues can stay open as peer tabs.
@@ -112,6 +114,12 @@ export type RightPanelSurface =
   | LinkedThreadSurface;
 
 export type ThreadSurface = { id: `thread:${string}`; kind: "thread"; threadId: ThreadId };
+export type SubagentsSurface = {
+  id: "subagents";
+  kind: "subagents";
+  /** Selected subagent id (child thread id or native subagent id); omitted shows the list view. */
+  selectedSubagentId?: string;
+};
 
 const threadSurface = (threadId: ThreadId): ThreadSurface => ({
   id: `thread:${threadId}`,
@@ -190,6 +198,8 @@ interface RightPanelStoreState {
       "file" | "terminal" | "pull-request" | "issue" | "thread" | "linked-thread"
     >,
   ) => void;
+  /** Opens the subagents tab, optionally drilled into one subagent's detail view. */
+  openSubagents: (ref: ScopedThreadRef, selectedSubagentId?: string) => void;
   /** Opens a side chat or subagent of `ref`'s environment as a tab; `ref` itself has no tab. */
   openThread: (ref: ScopedThreadRef, threadId: ThreadId) => void;
   openLinkedThread: (ref: ScopedThreadRef, target: LinkedThreadTarget) => void;
@@ -297,6 +307,8 @@ const singletonSurface = (
       return { id: "files", kind };
     case "pull-requests":
       return { id: "pull-requests", kind };
+    case "subagents":
+      return { id: "subagents", kind };
     case "device":
       return { id: "device", kind };
   }
@@ -677,6 +689,20 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                         }),
                       ];
                     }
+                    if (surface.kind === "subagents") {
+                      const selectedSubagentId =
+                        typeof surface.selectedSubagentId === "string" &&
+                        surface.selectedSubagentId.length > 0
+                          ? surface.selectedSubagentId
+                          : undefined;
+                      return [
+                        {
+                          id: "subagents",
+                          kind: "subagents",
+                          ...(selectedSubagentId ? { selectedSubagentId } : {}),
+                        },
+                      ];
+                    }
                     if (surface.kind !== "terminal") return [surface];
                     if (
                       !("resourceId" in surface) ||
@@ -847,6 +873,20 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               return upsertSurface(current, existing ?? browserSurface(null));
             }
             return upsertSurface(current, singletonSurface(kind));
+          }),
+        ),
+      openSubagents: (ref, selectedSubagentId) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
+            const surface: SubagentsSurface =
+              selectedSubagentId && selectedSubagentId.length > 0
+                ? { id: "subagents", kind: "subagents", selectedSubagentId }
+                : { id: "subagents", kind: "subagents" };
+            const next = upsertSurface(current, surface);
+            return {
+              ...next,
+              surfaces: next.surfaces.map((entry) => (entry.id === surface.id ? surface : entry)),
+            };
           }),
         ),
       openDevice: (ref, target, automatic = false) =>

@@ -89,6 +89,8 @@ import { ThreadRelationshipIcon, threadRelationshipStatusLabel } from "./ThreadR
 import { ThreadLineageWorkflowRow } from "./ThreadLineageWorkflowRow";
 import { useSideThreadTrigger } from "../../hooks/useSideThreadTrigger";
 import { openSideThread, resolveThreadOpenRoute } from "../../lib/sideChatPane";
+import { useRightPanelStore } from "../../rightPanelStore";
+import { EnvironmentSubagentAvatar } from "./V2LifecycleRow";
 
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -160,14 +162,10 @@ type RemoteSubagent = OrchestrationV2Subagent & {
   readonly remoteChild: OrchestrationV2RemoteTaskChild;
 };
 
-type LineageRow =
-  | ThreadRelationshipWalkRow
-  | { readonly remote: RemoteSubagent }
-  | { readonly native: OrchestrationV2Subagent };
+type LineageRow = ThreadRelationshipWalkRow | { readonly remote: RemoteSubagent };
 
 const lineageRowStatus = (row: LineageRow) =>
-  "remote" in row ? row.remote.status : "native" in row ? row.native.status : row.edge.status;
-
+  "remote" in row ? row.remote.status : row.edge.status;
 const isFinishedAgentStatus = (status: string | null | undefined) =>
   ["completed", "failed", "error", "cancelled", "interrupted", "idle"].includes(status ?? "");
 
@@ -537,7 +535,6 @@ export function ThreadRelationshipsPanel(props: {
   const mergeErrorToastId = useRef<string | null>(null);
   const detachErrorToastId = useRef<string | null>(null);
   const [stoppingId, setStoppingId] = useState<string | null>(null);
-  const [expandedNativeId, setExpandedNativeId] = useState<string | null>(null);
   // Derive graphs after hooks to preserve their compiler cache.
   const providers = providersByEnvironment.get(props.environmentId);
   const derivedProviderEntries = deriveProviderInstanceEntries(providers ?? []);
@@ -659,60 +656,115 @@ export function ThreadRelationshipsPanel(props: {
   );
   const { nativeActive = [], nativePrevious = [] } = groupBy(
     projected
-      .filter(
-        (agent) =>
-          agent.driver === "ompRpc" &&
-          agent.childThreadId === null &&
-          agent.remoteChild === undefined,
-      )
+      .filter((agent) => agent.childThreadId === null && agent.remoteChild === undefined)
       .map((native) => ({ native })),
     ({ native }) => (isFinishedAgentStatus(native.status) ? "nativePrevious" : "nativeActive"),
   );
+  const activeSubagentCount = active.length + nativeActive.length + remoteActive.length;
+  const completedSubagentCount = previous.length + nativePrevious.length + remotePrevious.length;
+  const totalSubagentCount = activeSubagentCount + completedSubagentCount;
+  const subagentSummaryAvatars: ReadonlyArray<{
+    readonly key: string;
+    readonly providerInstanceId: OrchestrationV2Subagent["providerInstanceId"];
+    readonly driver: OrchestrationV2Subagent["driver"] | undefined;
+    readonly remote: OrchestrationV2RemoteTaskChild | undefined;
+    readonly status: OrchestrationV2Subagent["status"] | undefined;
+  }> = [
+    ...active.map(({ threadId, edge }) => {
+      const agent = subagentsByThreadId.get(threadId);
+      const node = graph.nodes.get(threadId);
+      return {
+        key: threadId,
+        providerInstanceId:
+          agent?.providerInstanceId ??
+          node?.thread?.providerInstanceId ??
+          currentThread?.providerInstanceId ??
+          ("codex" as OrchestrationV2Subagent["providerInstanceId"]),
+        driver:
+          agent?.driver ??
+          providers?.find((candidate) => candidate.instanceId === node?.thread?.providerInstanceId)
+            ?.driver,
+        remote: undefined,
+        status: (edge.status as OrchestrationV2Subagent["status"] | null) ?? agent?.status,
+      };
+    }),
+    ...nativeActive.map(({ native }) => ({
+      key: native.id,
+      providerInstanceId: native.providerInstanceId,
+      driver: native.driver,
+      remote: undefined,
+      status: native.status,
+    })),
+    ...remoteActive.map(({ remote }) => ({
+      key: remote.id,
+      providerInstanceId: remote.providerInstanceId,
+      driver: remote.driver,
+      remote: remote.remoteChild,
+      status: remote.status,
+    })),
+    ...previous.map(({ threadId, edge }) => {
+      const agent = subagentsByThreadId.get(threadId);
+      const node = graph.nodes.get(threadId);
+      return {
+        key: threadId,
+        providerInstanceId:
+          agent?.providerInstanceId ??
+          node?.thread?.providerInstanceId ??
+          currentThread?.providerInstanceId ??
+          ("codex" as OrchestrationV2Subagent["providerInstanceId"]),
+        driver:
+          agent?.driver ??
+          providers?.find((candidate) => candidate.instanceId === node?.thread?.providerInstanceId)
+            ?.driver,
+        remote: undefined,
+        status: (edge.status as OrchestrationV2Subagent["status"] | null) ?? agent?.status,
+      };
+    }),
+    ...nativePrevious.map(({ native }) => ({
+      key: native.id,
+      providerInstanceId: native.providerInstanceId,
+      driver: native.driver,
+      remote: undefined,
+      status: native.status,
+    })),
+    ...remotePrevious.map(({ remote }) => ({
+      key: remote.id,
+      providerInstanceId: remote.providerInstanceId,
+      driver: remote.driver,
+      remote: remote.remoteChild,
+      status: remote.status,
+    })),
+  ].slice(0, 3);
+  const subagentsSummaryLabel =
+    activeSubagentCount > 0 && completedSubagentCount > 0
+      ? gt("{activeCount} active · {completedCount} completed", {
+          activeCount: activeSubagentCount,
+          completedCount: completedSubagentCount,
+        })
+      : activeSubagentCount > 0
+        ? gt("{count} active", { count: activeSubagentCount })
+        : gt("{count} completed", { count: completedSubagentCount });
   const groups: ReadonlyArray<{
     id: string;
     label: string | null;
     rows: ReadonlyArray<LineageRow>;
     expanded: boolean;
-  }> = [
-    { id: "related", label: null, rows: related, expanded: true },
-    {
-      id: "active",
-      label: null,
-      rows: [...active, ...nativeActive, ...remoteActive],
-      expanded: true,
-    },
-    {
-      id: "previous",
-      label: gt("Previous agents"),
-      rows: [...previous, ...nativePrevious, ...remotePrevious],
-      expanded: false,
-    },
-  ];
-  const runningCount =
-    (projection?.subagents.filter(
-      (agent) => agent.childThreadId === null && agent.status === "running",
-    ).length ?? 0) + active.filter(({ edge }) => edge.status === "running").length;
+  }> = [{ id: "related", label: null, rows: related, expanded: true }];
 
   // A linked environment's agent may have delegated this thread from there.
   const delegatedFrom = currentThread?.delegatedFrom;
 
+  const subagentsVisible = props.showLineage && totalSubagentCount > 0;
   const lineageVisible =
     props.showLineage &&
     (related.length > 0 ||
-      active.length > 0 ||
-      previous.length > 0 ||
-      runningCount > 0 ||
-      remoteActive.length > 0 ||
-      remotePrevious.length > 0 ||
-      nativeActive.length > 0 ||
-      nativePrevious.length > 0 ||
       delegatedFrom !== undefined ||
-      // Disconnect lives in this heading, so a thread with only side chats still shows it.
-      (canDetach && sideChats.length > 0));
+      // Disconnect lives in this heading, so a thread with only side chats or subagents still shows it.
+      (canDetach && (sideChats.length > 0 || totalSubagentCount > 0)));
   const sideChatsVisible = props.showSideChats && sideChats.length > 0;
   const runningSideChats = sideChats.filter(({ edge }) => edge.status === "running").length;
 
-  if (!lineageVisible && !sideChatsVisible) {
+  if (!lineageVisible && !subagentsVisible && !sideChatsVisible) {
     return null;
   }
 
@@ -816,81 +868,6 @@ export function ThreadRelationshipsPanel(props: {
     if (result._tag === "Failure") {
       toastManager.add({ type: "error", title: gt("Could not stop workflow") });
     }
-  };
-
-  const renderNativeSubagentRow = (agent: OrchestrationV2Subagent) => {
-    // Oh My Pi reports the agent kind ("task") as the title; its prompt is the real label.
-    const title = formatSubagentDisplayTitle(agent.prompt || agent.title || "") || gt("Subagent");
-    const expanded = expandedNativeId === agent.id;
-    const detail = [
-      agent.promptOmitted === true ? "" : agent.prompt.trim(),
-      agent.progress?.trim() ?? "",
-      agent.resultOmitted === true ? "" : (agent.result?.trim() ?? ""),
-    ]
-      .filter(Boolean)
-      .join("\n\n");
-    const canStop =
-      !isFinishedAgentStatus(agent.status) &&
-      agent.runId !== null &&
-      agent.startedAt !== null &&
-      agent.nativeTaskRef?.strength === "strong" &&
-      agent.nativeTaskRef.nativeId !== null;
-    return (
-      <li key={agent.id} className={cn("flex flex-col", THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS)}>
-        <div className="flex h-8 items-center gap-2">
-          <button
-            type="button"
-            aria-expanded={expanded}
-            onClick={() => setExpandedNativeId(expanded ? null : agent.id)}
-            className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md text-left"
-          >
-            <ThreadRelationshipIcon
-              driver={agent.driver}
-              provider={providers?.find(
-                (provider) => provider.instanceId === agent.providerInstanceId,
-              )}
-              providerEntries={providerEntries}
-              status={agent.status}
-            />
-            <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground/85">
-              {title}
-            </span>
-            <ChevronDownIcon
-              aria-hidden
-              className={cn(
-                "size-3.5 shrink-0 text-muted-foreground transition-transform",
-                expanded && "rotate-180",
-              )}
-            />
-          </button>
-          <span className="shrink-0 text-2xs text-muted-foreground">
-            {threadRelationshipStatusLabel(agent.status, m)}
-          </span>
-          {canStop ? (
-            <ThreadDetailsControl
-              size="icon-xs"
-              variant="ghost"
-              part="icon"
-              tone="destructive"
-              aria-label={gt("Stop subagent {threadTitle}", { threadTitle: title })}
-              disabled={stoppingId !== null}
-              onClick={() => void stopSubagent(agent.id, agent)}
-            >
-              {stoppingId === agent.id ? (
-                <Spinner aria-hidden size="xs" />
-              ) : (
-                <SquareIcon aria-hidden className="size-3 fill-current" />
-              )}
-            </ThreadDetailsControl>
-          ) : null}
-        </div>
-        {expanded ? (
-          <p className="mb-1 max-h-56 overflow-y-auto whitespace-pre-wrap break-words pr-6 text-xs text-muted-foreground">
-            {detail}
-          </p>
-        ) : null}
-      </li>
-    );
   };
 
   const parentTitle =
@@ -1156,24 +1133,42 @@ export function ThreadRelationshipsPanel(props: {
 
   return (
     <>
+      {subagentsVisible ? (
+        <ThreadDetailsSection
+          headingId="thread-details-subagents-heading"
+          title={gt("Subagents")}
+          data-thread-subagents-panel
+        >
+          <ThreadDetailsControl
+            size="sm"
+            variant="ghost"
+            part="row"
+            panel
+            onClick={() => useRightPanelStore.getState().openSubagents(ref)}
+          >
+            <span className="flex shrink-0 items-center -space-x-1.5" aria-hidden>
+              {subagentSummaryAvatars.map((avatar) => (
+                <EnvironmentSubagentAvatar
+                  key={avatar.key}
+                  environmentId={props.environmentId}
+                  providerInstanceId={avatar.providerInstanceId}
+                  driver={avatar.driver}
+                  remote={avatar.remote}
+                  status={totalSubagentCount === 1 ? avatar.status : undefined}
+                />
+              ))}
+            </span>
+            <span className="min-w-0 flex-1 truncate text-left text-xs font-medium text-muted-foreground">
+              {subagentsSummaryLabel}
+            </span>
+          </ThreadDetailsControl>
+        </ThreadDetailsSection>
+      ) : null}
       {lineageVisible ? (
         <ThreadDetailsSection
           headingId="thread-details-lineage-heading"
-          title={
-            runningCount > 0
-              ? gt("Lineage · {runningCount} running", { runningCount })
-              : gt("Lineage", { $context: "thread details section: parent and child agents" })
-          }
-          // A lone "Previous agents" row names itself; the heading returns for status or actions.
-          showHeading={
-            runningCount > 0 ||
-            canDetach ||
-            related.length > 0 ||
-            active.length > 0 ||
-            remoteActive.length > 0 ||
-            nativeActive.length > 0 ||
-            delegatedFrom !== undefined
-          }
+          title={gt("Lineage", { $context: "thread details section: parent and child agents" })}
+          showHeading={canDetach || related.length > 0 || delegatedFrom !== undefined}
           data-thread-relationships-panel
           actions={
             canDetach ? (
@@ -1225,8 +1220,6 @@ export function ThreadRelationshipsPanel(props: {
                         ?.find((entry) => entry.instanceId === row.remote.providerInstanceId)}
                       anyInstanceBadge={hasInstanceBadge(providerEntries)}
                     />
-                  ) : "native" in row ? (
-                    renderNativeSubagentRow(row.native)
                   ) : (
                     renderRelationshipRow(row)
                   ),

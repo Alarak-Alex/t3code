@@ -4,8 +4,13 @@ import { AgentElapsed } from "./AgentElapsed";
 import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subagentRuntime";
 import { use, type ReactNode } from "react";
 import { useThreadShell, useProject } from "../../state/entities";
-import type { SideThreadOpenIntent } from "@t3tools/client-runtime/side-thread";
+import {
+  resolveSideThreadOpenTarget,
+  type SideThreadOpenIntent,
+} from "@t3tools/client-runtime/side-thread";
 import { SideThreadsOpenContext, useSideThreadTrigger } from "../../hooks/useSideThreadTrigger";
+import { getClientSettings } from "../../hooks/useSettings";
+import { useRightPanelStore } from "../../rightPanelStore";
 import { useLinkedThreadOpener } from "../../state/linkedThreadView";
 import { SubagentTooltipContent } from "./SubagentTooltipContent";
 import { useAtomValue } from "@effect/atom-react";
@@ -473,11 +478,29 @@ function SubagentTimelineLink(props: {
   const canOpen = use(SideThreadsOpenContext);
   const open = !canOpen
     ? null
-    : threadId !== null
-      ? (intent: SideThreadOpenIntent) => props.onOpenThread(threadId, undefined, intent)
-      : (remoteOpener?.open ?? null);
-  // A task on a connected linked environment opens there, on the main screen only.
-  const panel = threadId !== null || remoteOpener?.mode === "linked";
+    : (intent: SideThreadOpenIntent) => {
+        const target = resolveSideThreadOpenTarget({
+          preference: getClientSettings().sideThreadOpenTarget,
+          intent,
+          panelAvailable: true,
+        });
+        if (target === "panel") {
+          useRightPanelStore
+            .getState()
+            .openSubagents(props.parentRef, threadId ?? props.subagentId);
+          return;
+        }
+        if (threadId !== null) {
+          props.onOpenThread(threadId, undefined, intent);
+          return;
+        }
+        if (remoteOpener !== null) {
+          remoteOpener.open(intent);
+          return;
+        }
+        useRightPanelStore.getState().openSubagents(props.parentRef, props.subagentId);
+      };
+  const panel = true;
   const liveStatus = agent?.status ?? props.status;
   const status = props.event ? props.event.status : liveStatus;
   const statusLabel = props.event?.label ?? m(subagentStatusVisual(liveStatus).label);
