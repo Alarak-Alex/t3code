@@ -537,6 +537,7 @@ export function ThreadRelationshipsPanel(props: {
   const mergeErrorToastId = useRef<string | null>(null);
   const detachErrorToastId = useRef<string | null>(null);
   const [stoppingId, setStoppingId] = useState<string | null>(null);
+  const [expandedNativeId, setExpandedNativeId] = useState<string | null>(null);
   // Derive graphs after hooks to preserve their compiler cache.
   const providers = providersByEnvironment.get(props.environmentId);
   const derivedProviderEntries = deriveProviderInstanceEntries(providers ?? []);
@@ -818,7 +819,16 @@ export function ThreadRelationshipsPanel(props: {
   };
 
   const renderNativeSubagentRow = (agent: OrchestrationV2Subagent) => {
-    const title = formatSubagentDisplayTitle(agent.title || agent.prompt) || gt("Subagent");
+    // Oh My Pi reports the agent kind ("task") as the title; its prompt is the real label.
+    const title = formatSubagentDisplayTitle(agent.prompt || agent.title || "") || gt("Subagent");
+    const expanded = expandedNativeId === agent.id;
+    const detail = [
+      agent.promptOmitted === true ? "" : agent.prompt.trim(),
+      agent.progress?.trim() ?? "",
+      agent.resultOmitted === true ? "" : (agent.result?.trim() ?? ""),
+    ]
+      .filter(Boolean)
+      .join("\n\n");
     const canStop =
       !isFinishedAgentStatus(agent.status) &&
       agent.runId !== null &&
@@ -826,38 +836,58 @@ export function ThreadRelationshipsPanel(props: {
       agent.nativeTaskRef?.strength === "strong" &&
       agent.nativeTaskRef.nativeId !== null;
     return (
-      <li
-        key={agent.id}
-        className={cn("flex h-8 items-center gap-2", THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS)}
-      >
-        <ThreadRelationshipIcon
-          driver={agent.driver}
-          provider={providers?.find((provider) => provider.instanceId === agent.providerInstanceId)}
-          providerEntries={providerEntries}
-          status={agent.status}
-        />
-        <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground/85">
-          {title}
-        </span>
-        <span className="shrink-0 text-2xs text-muted-foreground">
-          {threadRelationshipStatusLabel(agent.status, m)}
-        </span>
-        {canStop ? (
-          <ThreadDetailsControl
-            size="icon-xs"
-            variant="ghost"
-            part="icon"
-            tone="destructive"
-            aria-label={gt("Stop subagent {threadTitle}", { threadTitle: title })}
-            disabled={stoppingId !== null}
-            onClick={() => void stopSubagent(agent.id, agent)}
+      <li key={agent.id} className={cn("flex flex-col", THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS)}>
+        <div className="flex h-8 items-center gap-2">
+          <button
+            type="button"
+            aria-expanded={expanded}
+            onClick={() => setExpandedNativeId(expanded ? null : agent.id)}
+            className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md text-left"
           >
-            {stoppingId === agent.id ? (
-              <Spinner aria-hidden size="xs" />
-            ) : (
-              <SquareIcon aria-hidden className="size-3 fill-current" />
-            )}
-          </ThreadDetailsControl>
+            <ThreadRelationshipIcon
+              driver={agent.driver}
+              provider={providers?.find(
+                (provider) => provider.instanceId === agent.providerInstanceId,
+              )}
+              providerEntries={providerEntries}
+              status={agent.status}
+            />
+            <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground/85">
+              {title}
+            </span>
+            <ChevronDownIcon
+              aria-hidden
+              className={cn(
+                "size-3.5 shrink-0 text-muted-foreground transition-transform",
+                expanded && "rotate-180",
+              )}
+            />
+          </button>
+          <span className="shrink-0 text-2xs text-muted-foreground">
+            {threadRelationshipStatusLabel(agent.status, m)}
+          </span>
+          {canStop ? (
+            <ThreadDetailsControl
+              size="icon-xs"
+              variant="ghost"
+              part="icon"
+              tone="destructive"
+              aria-label={gt("Stop subagent {threadTitle}", { threadTitle: title })}
+              disabled={stoppingId !== null}
+              onClick={() => void stopSubagent(agent.id, agent)}
+            >
+              {stoppingId === agent.id ? (
+                <Spinner aria-hidden size="xs" />
+              ) : (
+                <SquareIcon aria-hidden className="size-3 fill-current" />
+              )}
+            </ThreadDetailsControl>
+          ) : null}
+        </div>
+        {expanded ? (
+          <p className="mb-1 max-h-56 overflow-y-auto whitespace-pre-wrap break-words pr-6 text-xs text-muted-foreground">
+            {detail}
+          </p>
         ) : null}
       </li>
     );
