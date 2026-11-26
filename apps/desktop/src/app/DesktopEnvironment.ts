@@ -160,7 +160,10 @@ const make = Effect.fn("desktop.environment.make")(function* (
   const baseDir = resolveDesktopBaseDir({
     homeDirectory,
     joinPath: path.join,
-    t3Home: config.t3Home,
+    t3Home:
+      input.isPackaged && input.platform === "darwin" && input.appVersion.includes("-pr.t3-next.")
+        ? Option.some(path.join(homeDirectory, ".t3-next"))
+        : config.t3Home,
   });
   const rootDir = path.resolve(input.dirname, "../../..");
   const appRoot = input.isPackaged ? input.appPath : rootDir;
