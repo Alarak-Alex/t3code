@@ -19,6 +19,14 @@ import {
   type McpToolSession as SharedMcpToolSession,
 } from "@t3tools/shared/mcpToolSession";
 
+import {
+  MCP_TOOL_EXPOSURE_HEADER,
+  type McpToolExposureMode,
+  parseMcpToolExposureMode,
+} from "@t3tools/provider-core/server/mcpSession";
+
+/** ACP mandates stdio MCP support; HTTP/SSE support varies. */
+
 export { AcpMcpBridgeError, type McpToolSessionOptions };
 export type McpToolSession = Pick<SharedMcpToolSession, "call">;
 export const mcpToolSession = (
@@ -30,6 +38,7 @@ const decodeJsonLine = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.U
 export interface AcpMcpStdioBridgeOptions {
   readonly endpoint: string;
   readonly authorization: string;
+  readonly toolExposure?: McpToolExposureMode | undefined;
   readonly input: NodeJS.ReadableStream;
   readonly output: { write(chunk: string): unknown };
   readonly fetchImplementation?: (url: string, init?: RequestInit) => Promise<Response>;
@@ -96,6 +105,9 @@ export function runAcpMcpStdioBridge(options: AcpMcpStdioBridgeOptions): Effect.
                 "content-type": "application/json",
                 accept: "application/json, text/event-stream",
                 authorization: options.authorization,
+                ...(options.toolExposure === undefined
+                  ? {}
+                  : { [MCP_TOOL_EXPOSURE_HEADER]: options.toolExposure }),
                 ...(sessionId === null ? {} : { "mcp-session-id": sessionId }),
                 ...(protocolVersion === null ? {} : { "mcp-protocol-version": protocolVersion }),
               },
@@ -223,10 +235,12 @@ export async function runAcpMcpCliFastPath(
     return;
   }
   if (command === "acp-mcp-bridge") {
+    const toolExposure = parseMcpToolExposureMode(process.env.T3_ACP_MCP_TOOL_EXPOSURE);
     await Effect.runPromise(
       runAcpMcpStdioBridge({
         endpoint,
         authorization,
+        ...(toolExposure === undefined ? {} : { toolExposure }),
         input: process.stdin,
         output: process.stdout,
       }),
