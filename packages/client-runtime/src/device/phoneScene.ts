@@ -78,12 +78,16 @@ export function createPhoneScene(
   const height = SCREEN_HEIGHT + profile.bezel * 2;
   const backZ = 0.01 - profile.depth;
   const metal = new MeshStandardMaterial({ color: 0xb5bcc7, metalness: 0.88, roughness: 0.27 });
-  const glass = new MeshPhysicalMaterial({
-    color: 0x141820,
-    metalness: 0.15,
-    roughness: 0.2,
-    clearcoat: 1,
-  });
+  // Android streams already paint the display cutouts and corners black. Match their
+  // surround so the rounded edge of the texture mesh doesn't show up as a second outline.
+  const glass = profile.id.startsWith("android")
+    ? new MeshBasicMaterial({ color: 0x000000, toneMapped: false })
+    : new MeshPhysicalMaterial({
+        color: 0x141820,
+        metalness: 0.15,
+        roughness: 0.2,
+        clearcoat: 1,
+      });
   const backMaterial = new MeshStandardMaterial({
     color: profile.backColor,
     metalness: 0.45,
