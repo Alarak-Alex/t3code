@@ -1184,10 +1184,32 @@ function deriveTurnFolds(input: {
     const terminalEntryIndex = group.terminalEntry
       ? group.entries.findIndex((entry) => entry.id === group.terminalEntry?.id)
       : group.entries.length;
+    const lastSteerIndex =
+      group.steerSegments.findLast(({ startIndex }) => startIndex <= terminalEntryIndex)
+        ?.startIndex ?? 0;
+    const lastToolIndex = group.terminalEntry
+      ? group.entries.findLastIndex(
+          (entry, index) =>
+            index >= lastSteerIndex &&
+            index < terminalEntryIndex &&
+            entry.kind === "work" &&
+            entry.entry.tone !== "thinking" &&
+            workLogEntryIsToolLike(entry.entry),
+        )
+      : -1;
     // Folded dividers lose their place in the turn, so only the latest stays visible.
     const visibleCompactionId = group.entries.findLast(timelineEntryIsCompaction)?.id;
     for (const [index, entry] of group.entries.entries()) {
-      if (entry.id === group.terminalEntry?.id) {
+      if (
+        entry.id === group.terminalEntry?.id ||
+        (lastToolIndex !== -1 &&
+          index > lastToolIndex &&
+          index < terminalEntryIndex &&
+          entry.kind === "message" &&
+          entry.message.role === "assistant" &&
+          (entry.projectedItem?.item.type !== "assistant_message" ||
+            entry.projectedItem.item.phase !== "commentary"))
+      ) {
         continue;
       }
       const isCompaction = timelineEntryIsCompaction(entry);

@@ -1156,7 +1156,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(userRow?.revertTurnCount).toBe(0);
   });
 
-  it("folds the first assistant message and settled work before the terminal response", () => {
+  it("folds pre-tool progress but keeps the assistant replies after the last tool visible", () => {
     const timelineEntries = [
       {
         id: "user-entry",
@@ -1199,6 +1199,20 @@ describe("deriveMessagesTimelineRows", () => {
         },
       },
       {
+        id: "assistant-result-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:16Z",
+        message: {
+          id: "assistant-result" as never,
+          role: "assistant" as const,
+          text: "Opened PR #640. It is still a draft.",
+          runId: "turn-1" as never,
+          createdAt: "2026-01-01T00:00:16Z",
+          updatedAt: "2026-01-01T00:00:18Z",
+          streaming: false,
+        },
+      },
+      {
         id: "assistant-final-entry",
         kind: "message" as const,
         createdAt: "2026-01-01T00:00:20Z",
@@ -1232,6 +1246,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(collapsedRows.map((row) => row.id)).toEqual([
       "user-entry",
       "turn-fold:turn-1",
+      "assistant-result-entry",
       "assistant-final-entry",
     ]);
 
@@ -1249,6 +1264,7 @@ describe("deriveMessagesTimelineRows", () => {
       "turn-fold:turn-1",
       "assistant-first-entry",
       "work-entry-1",
+      "assistant-result-entry",
       "assistant-final-entry",
     ]);
     expect(

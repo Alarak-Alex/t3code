@@ -30,6 +30,10 @@ Files upload to the environment's machine as soon as you attach them, and all up
 
 See [images and videos](#images-and-videos-in-messages) for previewing and saving media.
 
+## Track agent tasks
+
+On web and desktop, expand **Tasks** in the thread details card to see the agent's latest reported checklist and its progress. This appears only when the agent reports a structured task list.
+
 ## Send while the agent is working
 
 Choose your default follow-up behavior in **Settings → Chat → Follow-up behavior** (per client):

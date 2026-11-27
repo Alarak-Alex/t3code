@@ -1605,6 +1605,9 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadLiveTokenUsage,
     activeProviderThread,
   );
+  const latestTodoList = serverVisibleTurnItems.findLast(
+    ({ item }) => item.type === "todo_list",
+  )?.item;
   const pendingBackgroundTasks = deriveThreadPendingBackgroundTasks(serverProjection);
   const activeWorkStartedAt =
     deriveActiveWorkStartedAt(activeActivityRun, activeRuntime, localDispatchStartedAt) ??
@@ -4208,6 +4211,11 @@ export default function ChatView(props: ChatViewProps) {
                   onAddProjectScript={saveProjectScriptStable}
                   onUpdateProjectScript={updateProjectScriptStable}
                   onDeleteProjectScript={deleteProjectScriptStable}
+                  todoSteps={
+                    isServerThread && latestTodoList?.type === "todo_list"
+                      ? latestTodoList.steps
+                      : undefined
+                  }
                   usage={{
                     providerInstanceId: activeProviderInstanceId,
                     model: activeUsageModel,

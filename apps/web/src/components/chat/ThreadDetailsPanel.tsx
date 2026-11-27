@@ -1,6 +1,7 @@
 import type {
   EditorId,
   EnvironmentId,
+  OrchestrationV2PlanStep,
   ProjectId,
   ProjectScript,
   ResolvedKeybindingsConfig,
@@ -19,8 +20,8 @@ import ProjectScriptsControl, {
   type NewProjectScriptInput,
   type ProjectScriptActionResult,
 } from "../ProjectScriptsControl";
-import { T, useGT } from "gt-react";
-import { useState, type ComponentProps } from "react";
+import { T, msg, useGT, useMessages } from "gt-react";
+import { useId, useState, type ComponentProps } from "react";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { OpenInPicker } from "./OpenInPicker";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
@@ -41,7 +42,7 @@ import { filesystemEnvironment } from "../../state/filesystem";
 import { useEnvironmentQuery } from "../../state/query";
 import { ThreadDetailsThreadPrRows } from "./ThreadDetailsPrRows";
 import { cn } from "../../lib/utils";
-import { SlidersHorizontalIcon } from "lucide-react";
+import { ChevronDownIcon, ListTodoIcon, SlidersHorizontalIcon } from "lucide-react";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import {
   THREAD_DETAILS_PANEL_ICON_CLASS,
@@ -94,7 +95,48 @@ interface ThreadDetailsPanelProps extends Pick<
     input: NewProjectScriptInput,
   ) => Promise<ProjectScriptActionResult>;
   onDeleteProjectScript: (scriptId: string) => Promise<ProjectScriptActionResult>;
+  todoSteps?: readonly OrchestrationV2PlanStep[] | undefined;
   usage: ThreadDetailsUsageInput;
+}
+
+const TODO_STATUS = {
+  completed: msg("Completed"),
+  running: msg("Running", { $context: "agent status" }),
+  pending: msg("Waiting"),
+};
+
+function ThreadDetailsTodos({ steps }: { steps: readonly OrchestrationV2PlanStep[] }) {
+  const headingId = useId();
+  const m = useMessages();
+  const label = m(msg("Tasks {done}/{total}"), {
+    done: steps.filter((step) => step.status === "completed").length,
+    total: steps.length,
+  });
+
+  return (
+    <ThreadDetailsSection headingId={headingId} title={label} showHeading={false}>
+      <details className="group/todos">
+        <summary className="flex min-h-8 cursor-pointer list-none items-center gap-2 rounded-md px-2.5 text-xs text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset [&::-webkit-details-marker]:hidden">
+          <ListTodoIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
+          <span>{label}</span>
+          <ChevronDownIcon className="ml-auto size-3 group-open/todos:rotate-180" aria-hidden />
+        </summary>
+        <ul className="max-h-48 space-y-1 overflow-y-auto px-2.5 py-1 text-xs">
+          {steps.map((step) => (
+            <li key={step.id} className="flex items-baseline gap-2">
+              <span aria-hidden className="shrink-0 text-muted-foreground">
+                {step.status === "completed" ? "✓" : step.status === "running" ? "◉" : "○"}
+              </span>
+              <span className="min-w-0 wrap-anywhere">
+                <span className="sr-only">{m(TODO_STATUS[step.status])}: </span>
+                {step.text}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </details>
+    </ThreadDetailsSection>
+  );
 }
 
 export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
@@ -316,6 +358,10 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                   environmentId={props.environmentId}
                   threadId={props.threadId}
                 />
+              ) : null}
+
+              {props.todoSteps && props.todoSteps.length > 0 ? (
+                <ThreadDetailsTodos key={props.threadId} steps={props.todoSteps} />
               ) : null}
 
               {density === "full" && !props.draftId && (visible.lineage || visible.sideChats) ? (

@@ -2,6 +2,7 @@ import {
   EnvironmentId,
   ProjectId,
   ThreadId,
+  type OrchestrationV2PlanStep,
   type ScopedThreadRef,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
@@ -179,12 +180,14 @@ function Panel({
   draftEnvMode,
   onMachines = false,
   withScripts = false,
+  todoSteps,
 }: {
   fixture: ReturnType<typeof setup>;
   /** Renders an unsent draft in this mode instead of a started thread. */
   draftEnvMode?: "local" | "worktree";
   onMachines?: boolean;
   withScripts?: boolean;
+  todoSteps?: readonly OrchestrationV2PlanStep[];
 }) {
   const noop = () => {};
   const scriptResult = async () => ({ ok: true }) as never;
@@ -234,11 +237,30 @@ function Panel({
         onAddProjectScript={scriptResult}
         onUpdateProjectScript={scriptResult}
         onDeleteProjectScript={scriptResult}
+        todoSteps={todoSteps}
         usage={{} as never}
       />
     </ChatCanvasContext>
   );
 }
+
+it("shows live task totals and expands the latest task checklist", async () => {
+  using fixture = setup({ workspaceRoot: SCRATCH_ROOT, folder: SCRATCH_ROOT });
+  const steps = [
+    { id: "implement", text: "Implement changes", status: "completed" },
+    { id: "verify", text: "Verify the build", status: "running" },
+  ] as const;
+  await using screen = await render(<Panel fixture={fixture} todoSteps={steps} />);
+  const tasks = page.getByRole("region", { name: "Tasks 1/2" });
+  await expect.element(tasks.getByRole("list")).not.toBeInTheDocument();
+  await tasks.locator("summary").click();
+  await expect.element(tasks.getByRole("list").getByText(/Verify the build/)).toBeVisible();
+  await screen.rerender(
+    <Panel fixture={fixture} todoSteps={[steps[0], { ...steps[1], status: "completed" }]} />,
+  );
+  const updated = page.getByRole("region", { name: "Tasks 2/2" });
+  await expect.element(updated.getByRole("list").getByText(/Verify the build/)).toBeVisible();
+});
 
 it("offers no git controls in a No project thread, but shows its linked pull request", async () => {
   using fixture = setup({
