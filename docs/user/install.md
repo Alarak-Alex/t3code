@@ -90,7 +90,7 @@ Open **Settings → Providers** (web or desktop), select the environment, and en
 | **OpenCode**     | Install [OpenCode](https://opencode.ai) and run `opencode auth login`.                                                   | [OpenCode](./providers-opencode.md)       |
 | **Kiro**         | Install [Kiro CLI](https://kiro.dev/docs/cli/) and run `kiro-cli login`.                                                 | [Kiro](./providers-kiro.md)               |
 | **Pi**           | Install [Pi](./providers-pi.md) (Node.js 22.19+) and run `pi` → `/login`.                                                | [Pi](./providers-pi.md)                   |
-| **Oh My Pi**     | Install [Oh My Pi](https://omp.sh/) on the server, run `omp login`, then enable it in Settings. | [Oh My Pi](./providers-acp.md#oh-my-pi) |
+| **Oh My Pi**     | Install [Oh My Pi](https://omp.sh/) on the server, run `omp login`, then enable it in Settings.                          | [Oh My Pi](./providers-acp.md#oh-my-pi)   |
 | **Muse Code**    | Install [Muse Code](https://dev.meta.ai/docs/muse-code) and run `muse login`.                                            | [Muse Code](./providers-muse.md)          |
 | **fx**           | Install [fx](https://fx.sh) and run `fx login`.                                                                          | [fx](./providers-fx.md)                   |
 | **ACP Registry** | Add GitHub Copilot and other agents in **Settings → Providers → Add provider → Show more**.                              | [ACP](./providers-acp.md)                 |
